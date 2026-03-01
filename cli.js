@@ -41,18 +41,19 @@ async function collectClaude() {
 async function collectCodex() {
   const counts = new Map()
   const dir = join(home, ".codex", "sessions")
-  for (const path of await fg("*/*/*/*rollout-*.jsonl", { cwd: dir })) {
+  for (const path of await fg("**/*.jsonl", { cwd: dir })) {
     const text = await readFile(join(dir, path), "utf-8")
-    let prevCumulative = -1
+    let prevCumulative = null
     for (const line of text.split("\n")) {
       if (!line.includes('"token_count"')) continue
       try {
         const obj = JSON.parse(line)
         if (obj.payload?.type !== "token_count") continue
-        const cumulative = obj.payload.info?.total_token_usage?.total_tokens ?? -1
-        if (cumulative === prevCumulative) continue
-        prevCumulative = cumulative
-        const tokens = obj.payload.info?.last_token_usage?.total_tokens
+        const cumTotal = obj.payload.info?.total_token_usage?.total_tokens
+        if (cumTotal != null && cumTotal === prevCumulative) continue
+        let tokens = obj.payload.info?.last_token_usage?.total_tokens
+        if (!tokens && cumTotal != null && prevCumulative != null) tokens = cumTotal - prevCumulative
+        if (cumTotal != null) prevCumulative = cumTotal
         if (tokens > 0 && obj.timestamp) add(counts, isoToDate(obj.timestamp), tokens)
       } catch {}
     }
@@ -62,10 +63,15 @@ async function collectCodex() {
 
 async function collectOpenCode() {
   const counts = new Map()
-  const dir = join(home, ".local", "share", "opencode", "storage", "message")
-  for (const path of await fg("ses_*/msg_*.json", { cwd: dir })) {
+  const dirs = [
+    join(home, ".local", "share", "opencode", "storage", "message"),
+    ...(process.platform === "darwin" ? [join(home, "Library", "Application Support", "opencode", "storage", "message")] : []),
+  ]
+  for (const dir of dirs)
+  for (const path of await fg("ses_*/msg_*.json", { cwd: dir, suppressErrors: true })) {
     try {
       const obj = JSON.parse(await readFile(join(dir, path), "utf-8"))
+      if (obj.role !== "assistant") continue
       const t = obj.tokens
       if (!t) continue
       const tokens = (t.input || 0) + (t.output || 0) + (t.reasoning || 0) +
@@ -79,12 +85,15 @@ async function collectOpenCode() {
 async function collectGemini() {
   const counts = new Map()
   const dir = join(home, ".gemini", "tmp")
-  for (const path of await fg("*/chats/session-*.json", { cwd: dir })) {
+  for (const path of await fg("*/chats/*.json", { cwd: dir })) {
     try {
       const obj = JSON.parse(await readFile(join(dir, path), "utf-8"))
       if (!obj.messages) continue
       for (const msg of obj.messages) {
-        if (msg.tokens?.total && msg.timestamp) add(counts, isoToDate(msg.timestamp), msg.tokens.total)
+        if (msg.type !== "gemini") continue
+        const t = msg.tokens
+        const tk = t?.total || ((t?.input || 0) + (t?.tool || 0) + (t?.output || 0) + (t?.thoughts || 0) + (t?.cached || 0))
+        if (tk > 0 && msg.timestamp) add(counts, isoToDate(msg.timestamp), tk)
       }
     } catch {}
   }
@@ -114,14 +123,15 @@ async function collectAmp() {
 async function collectPi() {
   const counts = new Map()
   const dir = join(home, ".pi", "agent", "sessions")
-  for (const path of await fg("*/*.jsonl", { cwd: dir })) {
+  for (const path of await fg("**/*.jsonl", { cwd: dir })) {
     const text = await readFile(join(dir, path), "utf-8")
     for (const line of text.split("\n")) {
       if (!line.includes('"usage"')) continue
       try {
         const obj = JSON.parse(line)
         if (obj.type !== "message") continue
-        const tokens = obj.message?.usage?.totalTokens
+        const u = obj.message?.usage || obj.usage
+        const tokens = u?.totalTokens || ((u?.input || 0) + (u?.output || 0) + (u?.reasoning || 0) + (u?.cacheRead || 0) + (u?.cacheWrite || 0))
         if (tokens > 0 && obj.timestamp) add(counts, isoToDate(obj.timestamp), tokens)
       } catch {}
     }
