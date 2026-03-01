@@ -1,0 +1,17 @@
+{
+  "name": "clanker-stats",
+  "version": "0.2.0",
+  "description": "See how many tokens you've burned across AI coding tools",
+  "type": "module",
+  "bin": {
+    "clanker-stats": "cli.js"
+  },
+  "files": [
+    "cli.js"
+  ],
+  "dependencies": {
+    "@resvg/resvg-js": "^2",
+    "fast-glob": "^3"
+  },
+  "license": "MIT"
+}
